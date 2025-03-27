@@ -1,171 +1,218 @@
-import { User } from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import getDataUri from "../utils/datauri.js";
-import cloudinary from "../utils/cloudinary.js";
+import dotenv from "dotenv";
+import {
+    insertUser,
+    getUserByUsername,
+    updateUserProfile,
+} from "../models/user.model.js";
+import {
+    insertApplicant,
+    getAllApplicantsFromDB,
+    getApplicantByIdFromDB,
+    updateApplicantProfile,
+} from "../models/jobApplicants.model.js";
+import { insertRecruiter } from "../models/recruiters.model.js";
+import { insertEducation } from "../models/applicantEducation.model.js";
 
-export const register = async (req, res) => {
-    try {
-        const { fullname, email, phoneNumber, password, role } = req.body;
-         
-        if (!fullname || !email || !phoneNumber || !password || !role) {
-            return res.status(400).json({
-                message: "Something is missing",
-                success: false
-            });
-        };
-        const file = req.file;
-        const fileUri = getDataUri(file);
-        const cloudResponse = await cloudinary.uploader.upload(fileUri.content);
+dotenv.config(); // Load environment variables
 
-        const user = await User.findOne({ email });
-        if (user) {
-            return res.status(400).json({
-                message: 'User already exist with this email.',
-                success: false,
-            })
-        }
-        const hashedPassword = await bcrypt.hash(password, 10);
+const JWT_SECRET = process.env.JWT_SECRET;
 
-        await User.create({
-            fullname,
-            email,
-            phoneNumber,
-            password: hashedPassword,
-            role,
-            profile:{
-                profilePhoto:cloudResponse.secure_url,
-            }
-        });
-
-        return res.status(201).json({
-            message: "Account created successfully.",
-            success: true
-        });
-    } catch (error) {
-        console.log(error);
-    }
+if (!JWT_SECRET) {
+    console.error("❌ JWT_SECRET is missing! Check your .env file.");
+    process.exit(1); // Exit if secret key is missing
 }
+
+// **Register a New User**
+export const register = async (req, res) => {
+    const {
+        username,
+        password,
+        role,
+        full_name,
+        birth_year,
+        current_location,
+        phone,
+        email,
+        preferred_position,
+        industry_fields,
+        education,
+    } = req.body;
+
+    try {
+        const passwordHash = await bcrypt.hash(password, 10);
+        const user_id = await insertUser(username, passwordHash, role);
+
+        if (role === "applicant") {
+            const applicant_id = await insertApplicant(
+                user_id,
+                username,
+                password,
+                full_name,
+                birth_year,
+                current_location,
+                phone,
+                email,
+                preferred_position,
+                industry_fields
+            );
+
+            if (education && Array.isArray(education)) {
+                for (const edu of education) {
+                    const { institution, degree, start_year, end_year } = edu;
+                    const certificateFiles = req.files
+                        ? req.files.map((file) => file.path).join(",")
+                        : "";
+                    await insertEducation(
+                        applicant_id,
+                        institution,
+                        degree,
+                        start_year,
+                        end_year,
+                        certificateFiles
+                    );
+                }
+            }
+
+            return res
+                .status(201)
+                .json({ message: "Applicant registered successfully", applicant_id });
+        } else if (role === "recruiter") {
+            const {
+                contact_name,
+                position,
+                email,
+                phone,
+                company_name,
+                company_address,
+                company_email,
+                company_phone,
+                locations,
+                services,
+                hiring_preferences,
+            } = req.body;
+
+            const recruiter_id = await insertRecruiter(
+                user_id,
+                username,
+                password,
+                contact_name,
+                position,
+                email,
+                phone,
+                company_name,
+                company_address,
+                company_email,
+                company_phone,
+                locations,
+                services,
+                hiring_preferences
+            );
+
+            return res
+                .status(201)
+                .json({ message: "Recruiter registered successfully", recruiter_id });
+        } else {
+            return res.status(400).json({ message: "Invalid role" });
+        }
+    } catch (error) {
+        console.error("Registration Error:", error);
+        return res.status(500).json({ message: "Registration failed", error });
+    }
+};
+
+// **User Login**
 export const login = async (req, res) => {
     try {
-        const { email, password, role } = req.body;
-        
-        if (!email || !password || !role) {
-            return res.status(400).json({
-                message: "Something is missing",
-                success: false
-            });
-        };
-        let user = await User.findOne({ email });
-        if (!user) {
-            return res.status(400).json({
-                message: "Incorrect email or password.",
-                success: false,
-            })
-        }
-        const isPasswordMatch = await bcrypt.compare(password, user.password);
-        if (!isPasswordMatch) {
-            return res.status(400).json({
-                message: "Incorrect email or password.",
-                success: false,
-            })
-        };
-        // check role is correct or not
-        if (role !== user.role) {
-            return res.status(400).json({
-                message: "Account doesn't exist with current role.",
-                success: false
-            })
-        };
+        console.log("Received login request:", req.body); // Log the request body
 
-        const tokenData = {
-            userId: user._id
-        }
-        const token = await jwt.sign(tokenData, process.env.SECRET_KEY, { expiresIn: '1d' });
+        const { username, password, role } = req.body;
 
-        user = {
-            _id: user._id,
-            fullname: user.fullname,
-            email: user.email,
-            phoneNumber: user.phoneNumber,
-            role: user.role,
-            profile: user.profile
+        if (!username || !password || !role) {
+            return res.status(400).json({ message: "Missing required fields" });
         }
 
-        return res.status(200).cookie("token", token, { maxAge: 1 * 24 * 60 * 60 * 1000, httpsOnly: true, sameSite: 'strict' }).json({
-            message: `Welcome back ${user.fullname}`,
-            user,
-            success: true
-        })
+        const user = await getUserByUsername(username);
+        console.log("Fetched user from DB:", user);
+
+        if (!user || user.role !== role) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        console.log("Password match:", isMatch);
+
+        if (!isMatch) {
+            return res.status(401).json({ message: "Invalid credentials" });
+        }
+
+        const token = jwt.sign(
+            { user_id: user.user_id, role: user.role },
+            JWT_SECRET,
+            { expiresIn: "7d" }
+        );
+
+        console.log("Generated Token:", token);
+
+        return res.status(200).json({ message: "Login successful", token });
     } catch (error) {
-        console.log(error);
+        console.error("Login error:", error);
+        return res.status(500).json({ message: "Login failed", error });
     }
-}
+};
+
+// **Update Profile**
+export const updateProfile = async (req, res) => {
+    const { user_id, newUsername, newPassword, phone, email } = req.body;
+    try {
+        const newPasswordHash = newPassword
+            ? await bcrypt.hash(newPassword, 10)
+            : null;
+
+        await updateUserProfile(user_id, newUsername, newPasswordHash);
+
+        if (phone || email) {
+            await updateApplicantProfile(user_id, phone, email);
+        }
+
+        return res.status(200).json({ message: "Profile updated successfully" });
+    } catch (error) {
+        return res.status(500).json({ message: "Profile update failed", error });
+    }
+};
+
+// **Logout**
 export const logout = async (req, res) => {
     try {
-        return res.status(200).cookie("token", "", { maxAge: 0 }).json({
-            message: "Logged out successfully.",
-            success: true
-        })
+        res.clearCookie("token"); // ✅ Clear the authentication token
+        return res.status(200).json({ message: "Logout successful" });
     } catch (error) {
-        console.log(error);
+        return res.status(500).json({ message: "Logout failed", error });
     }
-}
-export const updateProfile = async (req, res) => {
+};
+
+
+// **Get All Applicants**
+export const getAllApplicants = async (req, res) => {
     try {
-        const { fullname, email, phoneNumber, bio, skills } = req.body;
-        
-        const file = req.file;
-        // cloudinary ayega idhar
-        const fileUri = getDataUri(file);
-        const cloudResponse = await cloudinary.uploader.upload(fileUri.content);
-
-
-
-        let skillsArray;
-        if(skills){
-            skillsArray = skills.split(",");
-        }
-        const userId = req.id; // middleware authentication
-        let user = await User.findById(userId);
-
-        if (!user) {
-            return res.status(400).json({
-                message: "User not found.",
-                success: false
-            })
-        }
-        // updating data
-        if(fullname) user.fullname = fullname
-        if(email) user.email = email
-        if(phoneNumber)  user.phoneNumber = phoneNumber
-        if(bio) user.profile.bio = bio
-        if(skills) user.profile.skills = skillsArray
-      
-        // resume comes later here...
-        if(cloudResponse){
-            user.profile.resume = cloudResponse.secure_url // save the cloudinary url
-            user.profile.resumeOriginalName = file.originalname // Save the original file name
-        }
-
-
-        await user.save();
-
-        user = {
-            _id: user._id,
-            fullname: user.fullname,
-            email: user.email,
-            phoneNumber: user.phoneNumber,
-            role: user.role,
-            profile: user.profile
-        }
-
-        return res.status(200).json({
-            message:"Profile updated successfully.",
-            user,
-            success:true
-        })
+        const applicants = await getAllApplicantsFromDB();
+        return res.status(200).json({ applicants });
     } catch (error) {
-        console.log(error);
+        return res.status(500).json({ message: "Failed to fetch applicants", error });
     }
-}
+};
+
+// **Get Single Applicant by ID**
+export const getApplicantById = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const applicant = await getApplicantByIdFromDB(id);
+        if (!applicant) {
+            return res.status(404).json({ message: "Applicant not found" });
+        }
+        return res.status(200).json({ applicant });
+    } catch (error) {
+        return res.status(500).json({ message: "Failed to fetch applicant", error });
+    }
+};
