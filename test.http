@@ -1,1 +1,7 @@
-GET http://localhost:5000/api/v1/jobpostings/search?job_title=teacher
+POST http://localhost:5000/api/v1/admin/signup
+Content-Type: application/json
+
+{
+  "username": "devi",
+  "password": "krishna"
+}

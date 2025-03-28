@@ -10,5 +10,6 @@ const pool = mysql.createPool({
     database: process.env.MYSQL_DATABASE
 });
 
+// ✅ Export correctly for ES Modules
 export default pool;
 

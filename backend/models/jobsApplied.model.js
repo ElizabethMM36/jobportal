@@ -10,15 +10,26 @@ export const createJobsAppliedTable = async () => {
             applicant_field TEXT,
             job_title VARCHAR(255),
             company_name VARCHAR(255),
-            recruiter_contact_name VARCHAR(255),
-            recruiter_email VARCHAR(255),
-            recruiter_phone VARCHAR(255),
+            contact_name VARCHAR(255),
+            email VARCHAR(255),
+            phone VARCHAR(255),
             applicant_email VARCHAR(255),
             applicant_phone VARCHAR(255),
-            application_status ENUM('applied', 'under_review', 'interview_scheduled', 'hired', 'rejected'),
+            application_status ENUM('applied', 'under_review', 'interview_scheduled', 'hired', 'rejected') DEFAULT 'applied',
             FOREIGN KEY (applicant_id) REFERENCES job_applicants(applicant_id) ON DELETE CASCADE,
             FOREIGN KEY (job_id) REFERENCES job_postings(job_id) ON DELETE CASCADE
         );
     `;
-    await pool.query(query);
+
+    try {
+        const connection = await pool.getConnection(); // ✅ Ensure DB connection
+        await connection.query(query);
+        connection.release(); // ✅ Release the connection
+        console.log("✅ Table `jobs_applied` created successfully (if not exists)");
+    } catch (error) {
+        console.error("❌ Error creating `jobs_applied` table:", error);
+    }
 };
+
+// ✅ Call this function when the app starts
+createJobsAppliedTable();
